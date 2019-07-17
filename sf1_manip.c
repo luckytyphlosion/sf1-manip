@@ -783,7 +783,7 @@ void shuffle_folder(card_type * folder, uint * row_lengths, RNG * rng) {
     }
 }
 
-void sf1_shuffle(card_type * old_folder, uint folder_length) {
+void sf1_shuffle(card_type * old_folder, uint folder_length, RNG * rng, uint num_cards_to_output, uint initial_seed) {
     card_type folder[folder_length];
     uint row_lengths[2];
 
@@ -791,101 +791,47 @@ void sf1_shuffle(card_type * old_folder, uint folder_length) {
     row_lengths[1] = folder_length / 2;
 
     for (int i = 0; i < row_lengths[0]; i++) {
-        printf("[%d] = [%d]\n", i * 2, i);
+        //printf("[%d] = [%d]\n", i * 2, i);
         folder[i * 2] = old_folder[i];
     }
-    printf("\n");
+    //printf("\n");
 
     for (int i = 0; i < row_lengths[1]; i++) {
-        printf("[%d] = [%d]\n", i * 2 + 1, i + row_lengths[0]);
+        //printf("[%d] = [%d]\n", i * 2 + 1, i + row_lengths[0]);
         folder[i * 2 + 1] = old_folder[i + row_lengths[0]];
     }
-    printf("\n");
+    //printf("\n");
 
     for (int i = 0; i < folder_length; i++) {
-        printf("%s, ", card_names[folder[i]]);
+        //printf("%s, ", card_names[folder[i]]);
     }
-    printf("\n\n");
-
-
-    RNG * rng = rng_instantiate(FALSE);
-    rng_init(rng, 0x1337);
-    rng_twist(rng);
-
-    rng->index = 0x111;
+    //printf("\n\n");
 
     shuffle_folder(folder, row_lengths, rng);
     rng_jump_ahead(rng, 76);
-    printf("rng->index: %04x\n", rng->index);
+    //printf("rng->index: %04x\n", rng->index);
     shuffle_folder(folder, row_lengths, rng);
 
-    for (int i = 0; i < folder_length; i++) {
+    printf("%d: ", initial_seed);
+    for (int i = 0; i < num_cards_to_output; i++) {
         printf("%s, ", card_names[folder[i]]);
     }
     printf("\n");
 }
 
-/*
-void soft_reset_manipulation(void) {
+void soft_reset_manipulation(card_type * folder) {
     RNG * rng = rng_instantiate(FALSE);
 
-    uint cur_seed = 0x250;
-    uint best_seed = cur_seed;
-    uint best_seed_index = 0;
-    uint num_seeds = 0;
-
-    for (; cur_seed <= 0x280; cur_seed++) {
+    for (uint cur_seed = 0x250; cur_seed <= 0x280; cur_seed++) {
         uint cur_seed_start = cur_seed;
-        
+
         rng_init(rng, cur_seed);
         rng_twist(rng);
-
-        if (cur_seed % 1000 == 0) {
-            printf("cur_seed: %08x\n", cur_seed);
-        }
-
-        for (rng_primary->index = 0xad; rng_primary->index < 624; rng_primary->index += 3 /* actually += 4, but ++ happens in rng_next()8/) {
-            uint cur_seed_start = rng_next(rng_primary);
-            uint cur_seed_num_cards = 0;
-            rng_init(rng_trader, cur_seed_start);
-            for (rng_index = 0; rng_index < 15; rng_index++) {
-                card_type card = simulate_card_trader_roll(rng_trader, card_list_list);
-
-                if (good_card_bool_array[card]) {
-                    good_card_bool_array[card] = FALSE;
-                    cur_seed_num_cards++;
-                }
-            }
-
-            if (cur_seed_num_cards > best_seed_num_cards) {
-                best_seed_num_cards = cur_seed_num_cards;
-                best_seed = cur_seed;
-                best_seed_index = rng_primary->index - 1;
-            }
-
-            if (cur_seed_num_cards != 0) {
-                reset_good_card_bool_array(good_card_bool_array);
-            }
-        }
+        rng->index = 0x58;
+        
+        sf1_shuffle(folder, 30, rng, 6, cur_seed);
     }
-
-    rng_init(rng_primary, best_seed);
-    for (int i = 622; i < 624; i++) {
-        printf("%08x, ", rng_primary->state[i]);
-    }
-    rng_twist(rng_primary);
-    printf("\n");
-
-    rng_primary->index = best_seed_index;
-    uint rng_trader_seed = rng_next(rng_primary);
-    rng_init(rng_trader, rng_trader_seed);
-    printf("seed: %08x, index: %d, index in RAM: %04x, last index on title screen: %04x, rng_trader_seed: %08x, num_cards: %d\n", best_seed, best_seed_index, best_seed_index + 1, best_seed_index + 1 - 0x9f, rng_trader_seed, best_seed_num_cards);
-    for (rng_index = 0; rng_index < 15; rng_index++) {
-        card_type card = simulate_card_trader_roll(rng_trader, card_list_list);
-        printf("%s, ", card_names[card]);
-    }
-    printf("\n");
-}*/
+}
 
 void gen_folder_then_do_sf1_shuffle(void) {
     uint folder_length = 30;
@@ -895,11 +841,55 @@ void gen_folder_then_do_sf1_shuffle(void) {
         folder[card] = card;
     }
 
-    sf1_shuffle(folder, folder_length);
+    RNG * rng = rng_instantiate(FALSE);
+    rng_init(rng, 0x1337);
+    rng_twist(rng);
+
+    rng->index = 0x111;
+
+    sf1_shuffle(folder, folder_length, rng, folder_length, 0x1337);
+}
+
+card_type car_virus_folder[] = {
+    GrassStage,
+    BreakSabre,
+    QnOphiucaSP,
+    PlasmaGun1,
+    PlasmaGun1,
+    PlasmaGun1,
+    AirSpread,
+    AirSpread,
+    AirSpread,
+    JumboHmmr3,
+    VulcnSeed3,
+    StikyRain3,
+    Sword,
+    Sword,
+    Sword,
+    WideSword,
+    WideSword,
+    WideSword,
+    LongSword,
+    LongSword,
+    LongSword,
+    FireRing3,
+    LeoKingdmSP,
+    PegasuMgcSP,
+    CygnsWingSP,
+    DragonSkySP,
+    FlickrKck3,
+    ParlyzPlus,
+    Attack_10,
+    Attack_10
+};
+
+void gen_folder_then_do_soft_reset_folder_manipulation(void) {
+    soft_reset_manipulation(car_virus_folder);
 }
 
 int main(void) {
-    gen_folder_then_do_sf1_shuffle();
+    gen_folder_then_do_soft_reset_folder_manipulation();
+    //gen_folder_then_do_sf1_shuffle();
     //check_0xffffffff_output();
     //find_actual_good_trader_lists(amaken_lists);
     //find_all_periods();
