@@ -11,6 +11,7 @@ typedef unsigned char u8;
 typedef struct {
     uint index;
     uint chip_trader_optimize;
+    uint twist_count;
     uint state[624];
 } RNG;
 
@@ -445,6 +446,7 @@ void rng_init(RNG * rng, uint seed) {
         }
     }
     rng->index = 624;
+    rng->twist_count = 0;
 }
 
 uint rng_next(RNG * rng) {
@@ -495,6 +497,7 @@ void rng_twist(RNG * rng) {
             rng->state[623] = seed ^ rng->state[396] ^ xor;
         }
     }
+    rng->twist_count++;
     rng->index = 0;
 }
 
@@ -746,19 +749,18 @@ void find_actual_good_trader_lists(const card_type card_list_list[][65]) {
 }
 
 void check_0xffffffff_output(void) {
-    uint orig_seed;
+    uint seed;
 
-    for (uint seed = 0; seed <= 0xfffffffe; seed++) {
-        orig_seed = seed;
+    for (ulong orig_seed = 0; orig_seed <= 0xffffffff; orig_seed++) {
+        seed = orig_seed;
         seed ^= (seed >> 11);
         seed ^= (seed <<  7) & 0x9D2C5680;
         seed ^= (seed << 15) & 0xEFC60000;
         seed ^= (seed >> 18);
         if (((seed & 0xffff) % 0xc80) == 0xc7f) {
-            break;
+            printf("orig_seed: %08x, seed: %08x\n", orig_seed, seed);
         }
     }
-    printf("orig_seed: %08x\n", orig_seed);
 }
 
 void sf1_shuffle_interleave(card_type * old_folder, card_type * new_folder, uint partition_length, uint index_offset) {
@@ -887,8 +889,144 @@ void gen_folder_then_do_soft_reset_folder_manipulation(void) {
     soft_reset_manipulation(car_virus_folder);
 }
 
+#define ENC_PERCENT(rng) (((rng_next(rng) >> 16) % 0xc80) / 0x20)
+
+uint greedy_skip_n_encounters(RNG * rng, uint num_encs, uint enc_rate, uint allow_print) {
+    uint successive_enc_skips = 0;
+    uint num_rng_skips = 0;
+    uint total_enc_skips = 0;
+    uint total_rng_skip_time = 0;
+    
+    while (total_enc_skips < num_encs) {
+        if (ENC_PERCENT(rng) <= enc_rate) {
+            rng_jump_ahead(rng, 5); // try auto-favouriting 6 cards
+            // first try auto-favouriting 5 cards (number is 4 to account for above RNG call advancing rng index)
+            /*five_auto_favourite_skips_enc = (ENC_PERCENT(rng) <= enc_rate);
+            six_auto_favourite_skips_enc = */
+            if (successive_enc_skips) {
+                if (allow_print) {
+                    printf("skipped %d encounters\n", successive_enc_skips);
+                }
+                total_rng_skip_time += 192; // amount of time to open the folder
+                successive_enc_skips = 0;
+            }
+            total_rng_skip_time += 436;
+            num_rng_skips++;
+        } else if (num_rng_skips) {
+            if (allow_print) {
+                printf("skipped %d RNG values\n", num_rng_skips);
+            }
+            total_rng_skip_time += 263;
+            num_rng_skips = 0;
+        }
+        if (num_rng_skips == 0) {
+            successive_enc_skips++;
+            total_enc_skips++;
+            enc_rate++;
+        }
+    }
+    if (successive_enc_skips && allow_print) {
+        printf("skipped %d encounters\n", successive_enc_skips);
+    }
+    if (allow_print) {
+        printf("\n");
+    }
+    return total_rng_skip_time;
+}
+            
+void print_one_rng_state(void) {
+    RNG * rng = rng_instantiate(FALSE);
+    rng_init(rng, 0x12bf0900);
+
+    for (int i = 0; i < 0x270; i++) {
+        printf("%d, ", ENC_PERCENT(rng));
+    }
+    printf("\n");
+}
+
+#define TRUCK_COMP_2_RESET_ENC_RATE TRUE
+
+void print_truck_comps_rng_seed_encounter_info(uint best_seed, uint rng_start_index) {
+    RNG * rng = rng_instantiate(FALSE);
+    rng_init(rng, best_seed);
+    rng_jump_ahead(rng, 0x14 + rng_start_index);
+    greedy_skip_n_encounters(rng, 4, 10, TRUE);
+    rng_jump_ahead(rng, 0x17);
+    greedy_skip_n_encounters(rng, 4, 10, TRUE);
+    rng_jump_ahead(rng, 0x32);
+    greedy_skip_n_encounters(rng, 6, 10, TRUE);
+    rng_jump_ahead(rng, 0x2d);
+    greedy_skip_n_encounters(rng, 9, 10, TRUE);
+    rng_jump_ahead(rng, 0x31);
+    greedy_skip_n_encounters(rng, 8, 19, TRUE);
+    rng_jump_ahead(rng, 0x49);
+    greedy_skip_n_encounters(rng, 6, 27, TRUE);
+    rng_jump_ahead(rng, 0x51);
+    if (TRUCK_COMP_2_RESET_ENC_RATE) {
+        greedy_skip_n_encounters(rng, 9, 33, TRUE);
+        greedy_skip_n_encounters(rng, 5, 10, TRUE);
+    } else {
+        greedy_skip_n_encounters(rng, 15, 33, TRUE);
+    }
+}
+
+//0x12bf5277
+void get_best_seed_for_skip_truck_comps_encounters(void) {
+    RNG * rng = rng_instantiate(FALSE);
+    uint cur_seed = 0x12bf0900 + 60;
+    uint best_seed = cur_seed;
+    uint best_rng_start_index = 0x17;
+    uint lowest_rng_skip_time = 0xffffffff;
+    uint num_retwists = 0;
+    for (; cur_seed <= (0x12bf0900 + 86400); cur_seed++) {
+        uint cur_rng_skip_time = 0;
+        rng_init(rng, cur_seed);
+        for (int rng_start_index = 0x17; rng_start_index < 0x57; rng_start_index += 4) {
+            if (rng->twist_count != 1) {
+                rng_init(rng, cur_seed);
+                rng_twist(rng);
+                
+                num_retwists++;
+            }
+            rng->index = 0;
+            rng_jump_ahead(rng, 0x14 + rng_start_index);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 4, 10, FALSE);
+            rng_jump_ahead(rng, 0x17);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 4, 10, FALSE);
+            rng_jump_ahead(rng, 0x32);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 6, 10, FALSE);
+            rng_jump_ahead(rng, 0x2d);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 9, 10, FALSE);
+            rng_jump_ahead(rng, 0x31);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 8, 19, FALSE);
+            rng_jump_ahead(rng, 0x49);
+            cur_rng_skip_time += greedy_skip_n_encounters(rng, 6, 27, FALSE);
+            rng_jump_ahead(rng, 0x51);
+            if (TRUCK_COMP_2_RESET_ENC_RATE) {
+                cur_rng_skip_time += greedy_skip_n_encounters(rng, 9, 33, FALSE);
+                cur_rng_skip_time += greedy_skip_n_encounters(rng, 5, 10, FALSE);
+                cur_rng_skip_time += 477;
+            } else {
+                cur_rng_skip_time += greedy_skip_n_encounters(rng, 15, 33, FALSE);
+            }
+
+            if (cur_rng_skip_time < lowest_rng_skip_time) {
+                lowest_rng_skip_time = cur_rng_skip_time;
+                best_seed = cur_seed;
+                best_rng_start_index = rng_start_index;
+            }
+        }
+    }
+    printf("best seed: 0x%08x, rng index: 0x%02x, time taken: %d\n", best_seed, best_rng_start_index, lowest_rng_skip_time);
+    printf("num retwists: %d\n", num_retwists);
+    print_truck_comps_rng_seed_encounter_info(best_seed, best_rng_start_index);
+}
+
 int main(void) {
-    gen_folder_then_do_soft_reset_folder_manipulation();
+    get_best_seed_for_skip_truck_comps_encounters();
+    //skip_truck_comps_encounters();
+    //check_0xffffffff_output();
+    //gen_folder_then_do_soft_reset_folder_manipulation();
     //gen_folder_then_do_sf1_shuffle();
     //check_0xffffffff_output();
     //find_actual_good_trader_lists(amaken_lists);
