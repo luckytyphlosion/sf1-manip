@@ -889,7 +889,7 @@ void gen_folder_then_do_soft_reset_folder_manipulation(void) {
     soft_reset_manipulation(car_virus_folder);
 }
 
-#define ENC_PERCENT(rng) (((rng_next(rng) >> 16) % 0xc80) / 0x20)
+#define ENC_PERCENT(rng) (((rng_next(rng) & 0xffff) % 0xc80) / 0x20)
 
 uint greedy_skip_n_encounters(RNG * rng, uint num_encs, uint enc_rate, uint allow_print) {
     uint successive_enc_skips = 0;
@@ -898,7 +898,8 @@ uint greedy_skip_n_encounters(RNG * rng, uint num_encs, uint enc_rate, uint allo
     uint total_rng_skip_time = 0;
     
     while (total_enc_skips < num_encs) {
-        if (ENC_PERCENT(rng) <= enc_rate) {
+        uint enc_percent = ENC_PERCENT(rng);
+        if (enc_percent <= enc_rate) {
             rng_jump_ahead(rng, 5); // try auto-favouriting 6 cards
             // first try auto-favouriting 5 cards (number is 4 to account for above RNG call advancing rng index)
             /*five_auto_favourite_skips_enc = (ENC_PERCENT(rng) <= enc_rate);
@@ -923,6 +924,9 @@ uint greedy_skip_n_encounters(RNG * rng, uint num_encs, uint enc_rate, uint allo
             successive_enc_skips++;
             total_enc_skips++;
             enc_rate++;
+            if (allow_print) {
+                printf("random encounter value: %d\n", enc_percent);
+            }
         }
     }
     if (successive_enc_skips && allow_print) {
@@ -970,22 +974,34 @@ void print_truck_comps_rng_seed_encounter_info(uint best_seed, uint rng_start_in
     }
 }
 
-//0x12bf5277
-void get_best_seed_for_skip_truck_comps_encounters(void) {
+void verify_last_two_words_of_rng_state(uint seed) {
     RNG * rng = rng_instantiate(FALSE);
-    uint cur_seed = 0x12bf0900 + 60;
+    rng_init(rng, seed);
+    for (int i = 622; i < 624; i++) {
+        printf("%08x, ", rng->state[i]);
+    }
+    printf("\n");
+}
+
+
+//0x12bf5277
+void get_best_seed_for_skip_truck_comps_encounters(uint mac_addr_part) {
+    RNG * rng = rng_instantiate(FALSE);
+    uint cur_seed = mac_addr_part + 60;
     uint best_seed = cur_seed;
     uint best_rng_start_index = 0x17;
     uint lowest_rng_skip_time = 0xffffffff;
     uint num_retwists = 0;
-    for (; cur_seed <= (0x12bf0900 + 86400); cur_seed++) {
+    for (; cur_seed <= (mac_addr_part + 86400); cur_seed++) {
+        if (cur_seed == 0xa2bf8b79 || cur_seed == 0xa2bfb10b) {
+            continue;
+        }
         uint cur_rng_skip_time = 0;
         rng_init(rng, cur_seed);
-        for (int rng_start_index = 0x17; rng_start_index < 0x57; rng_start_index += 4) {
+        for (int rng_start_index = 0xb; rng_start_index < 0x57; rng_start_index += 4) {
             if (rng->twist_count != 1) {
                 rng_init(rng, cur_seed);
                 rng_twist(rng);
-                
                 num_retwists++;
             }
             rng->index = 0;
@@ -1020,10 +1036,22 @@ void get_best_seed_for_skip_truck_comps_encounters(void) {
     printf("best seed: 0x%08x, rng index: 0x%02x, time taken: %d\n", best_seed, best_rng_start_index, lowest_rng_skip_time);
     printf("num retwists: %d\n", num_retwists);
     print_truck_comps_rng_seed_encounter_info(best_seed, best_rng_start_index);
+    verify_last_two_words_of_rng_state(best_seed);
 }
 
+void verify_enc_percent_values(uint seed) {
+    RNG * rng = rng_instantiate(FALSE);
+    rng_init(rng, seed);
+    for (int i = 0; i < 50; i++) {
+        printf("%d, ", ENC_PERCENT(rng));
+    }
+    printf("\n");
+}
+    
 int main(void) {
-    get_best_seed_for_skip_truck_comps_encounters();
+    //verify_enc_percent_values(0xa2bf5137);
+    get_best_seed_for_skip_truck_comps_encounters(0xa2bf0900); // 6dbe1c00
+    //verify_last_two_words_of_rng_state(0xa2bfb10b);
     //skip_truck_comps_encounters();
     //check_0xffffffff_output();
     //gen_folder_then_do_soft_reset_folder_manipulation();
