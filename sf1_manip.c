@@ -596,7 +596,9 @@ const card_type good_cards[] = {
     BlackHole3,
     BlackHole2,
     MagiCrysl2,
-    VolticEye2
+    VolticEye2,
+    Fokx_Fu3,
+    BrsrkSwrd2
 };
 
 #define LEN(x)  (sizeof(x) / sizeof((x)[0]))
@@ -683,19 +685,54 @@ void find_good_trader_lists(const card_type card_list_list[][65]) {
     printf("\n");
 }
 
+
+void get_auto_favourite_cards(RNG * rng, uint * slot_indices) {
+    for (int i = 0; i < 6; i++) {
+        uint cur_slot = (rng_next(rng) >> 1) % 30;
+        for (int j = 0; j < i; j++) {
+            if (cur_slot == slot_indices[j]) {
+                cur_slot = (cur_slot + 1) % 30;
+            }
+        }
+        slot_indices[i] = cur_slot;
+    }
+    for (int i = 1; i < 6; i++) {
+        for (int j = i; j > 0 && (slot_indices[j - 1] > slot_indices[j]); j--) {
+            uint temp = slot_indices[j];
+            slot_indices[j] = slot_indices[j - 1];
+            slot_indices[j - 1] = temp;
+        }
+    }
+}
+
+#define MACADDR_U32 0x6fbf0900
+#define NUM_TRADER_ATTEMPTS 15
+
+typedef struct {
+    uint seed;
+    uint index;
+} seed_skip;
+
+// 0x12bf0900
 void find_actual_good_trader_lists(const card_type card_list_list[][65]) {
     RNG * rng_primary = rng_instantiate(FALSE);
     RNG * rng_trader = rng_instantiate(TRUE);
     unsigned char * good_card_bool_array = initialize_good_card_bool_array();
 
-    ulong cur_seed = 0x12bf0900;
+    ulong cur_seed = MACADDR_U32;
     uint best_seed = cur_seed;
     uint best_seed_index = 0;
     uint best_seed_num_cards = 0;
     uint rng_index;
     uint num_seeds = 0;
 
-    for (; cur_seed <= (0x12bf0900 + 86541); cur_seed++) {
+    uint slot_indices[6];
+    
+    seed_skip seeds_to_skip[] = {
+        //{.seed = 0x6fbf62eb, .index = 493}
+    };
+
+    for (; cur_seed <= (MACADDR_U32 + 86541); cur_seed++) {
         uint cur_seed_start = cur_seed;
         
         rng_init(rng_primary, cur_seed);
@@ -706,10 +743,23 @@ void find_actual_good_trader_lists(const card_type card_list_list[][65]) {
         }
 
         for (rng_primary->index = 0xad; rng_primary->index < 624; rng_primary->index += 3 /* actually += 4, but ++ happens in rng_next()*/) {
+            uint skip_this_seed_index = FALSE;
+            for (int i = 0; i < LEN(seeds_to_skip); i++) {
+                if (cur_seed == seeds_to_skip[i].seed && rng_primary->index == seeds_to_skip[i].index) {
+                    rng_primary->index++;
+                    skip_this_seed_index = TRUE;
+                    break;
+                }
+            }
+
+            if (skip_this_seed_index) {
+                continue;
+            }
+
             uint cur_seed_start = rng_next(rng_primary);
             uint cur_seed_num_cards = 0;
             rng_init(rng_trader, cur_seed_start);
-            for (rng_index = 0; rng_index < 15; rng_index++) {
+            for (rng_index = 0; rng_index < NUM_TRADER_ATTEMPTS; rng_index++) {
                 card_type card = simulate_card_trader_roll(rng_trader, card_list_list);
 
                 if (good_card_bool_array[card]) {
@@ -740,10 +790,22 @@ void find_actual_good_trader_lists(const card_type card_list_list[][65]) {
     rng_primary->index = best_seed_index;
     uint rng_trader_seed = rng_next(rng_primary);
     rng_init(rng_trader, rng_trader_seed);
-    printf("seed: %08x, index: %d, index in RAM: %04x, last index on title screen: %04x, rng_trader_seed: %08x, num_cards: %d\n", best_seed, best_seed_index, best_seed_index + 1, best_seed_index + 1 - 0x9f, rng_trader_seed, best_seed_num_cards);
-    for (rng_index = 0; rng_index < 15; rng_index++) {
+    printf("seed: %08x, seed diff: %d, index: %d, index in RAM: %04x, last index on title screen: %04x, rng_trader_seed: %08x, num_cards: %d\n",
+             best_seed, best_seed - MACADDR_U32, best_seed_index, best_seed_index + 1, best_seed_index + 1 - 0x9f, rng_trader_seed, best_seed_num_cards);
+    for (rng_index = 0; rng_index < NUM_TRADER_ATTEMPTS; rng_index++) {
         card_type card = simulate_card_trader_roll(rng_trader, card_list_list);
         printf("%s, ", card_names[card]);
+    }
+    printf("\n");
+    
+    rng_init(rng_primary, best_seed);
+    rng_twist(rng_primary);
+    rng_primary->index = best_seed_index + 1;
+    get_auto_favourite_cards(rng_primary, slot_indices);
+
+    printf("Slot indices (one-indexed): ");
+    for (int i = 0; i < 6; i++) {
+        printf("%d, ", slot_indices[i] + 1);
     }
     printf("\n");
 }
@@ -763,14 +825,6 @@ void check_0xffffffff_output(void) {
     }
 }
 
-void sf1_shuffle_interleave(card_type * old_folder, card_type * new_folder, uint partition_length, uint index_offset) {
-    for (int i = 0; i < partition_length; i += 2) {
-        printf("[%d] = [%d]\n", i + index_offset, (i / 2) + index_offset);
-        new_folder[i * 2 + index_offset] = old_folder[(i / 2) + index_offset];
-    }
-    printf("\n");
-}
-
 void shuffle_folder(card_type * folder, uint * row_lengths, RNG * rng) {
     for (int row = 0; row < 2; row++) {
         for (int cur_card = 0; cur_card < row_lengths[row]; cur_card++) {
@@ -785,7 +839,7 @@ void shuffle_folder(card_type * folder, uint * row_lengths, RNG * rng) {
     }
 }
 
-void sf1_shuffle(card_type * old_folder, uint folder_length, RNG * rng, uint num_cards_to_output, uint initial_seed) {
+void sf1_shuffle(card_type * old_folder, uint folder_length, RNG * rng, uint num_cards_to_output, uint initial_seed, uint print_slot) {
     card_type folder[folder_length];
     uint row_lengths[2];
 
@@ -815,23 +869,29 @@ void sf1_shuffle(card_type * old_folder, uint folder_length, RNG * rng, uint num
     shuffle_folder(folder, row_lengths, rng);
 
     printf("%d: ", initial_seed);
-    for (int i = 0; i < num_cards_to_output; i++) {
-        printf("%s, ", card_names[folder[i]]);
+    if (print_slot) {
+        for (int i = 0; i < num_cards_to_output; i++) {
+            printf("%d, ", folder[i] + 1);
+        }
+    } else {
+        for (int i = 0; i < num_cards_to_output; i++) {
+            printf("%s, ", card_names[folder[i]]);
+        }
     }
     printf("\n");
 }
 
-void soft_reset_manipulation(card_type * folder) {
+void soft_reset_manipulation(card_type * folder, uint folder_length, uint start_frame_boundary, uint end_frame_boundary, uint rng_index, uint print_slot) {
     RNG * rng = rng_instantiate(FALSE);
 
-    for (uint cur_seed = 0x250; cur_seed <= 0x280; cur_seed++) {
+    for (uint cur_seed = start_frame_boundary; cur_seed <= end_frame_boundary; cur_seed++) {
         uint cur_seed_start = cur_seed;
 
         rng_init(rng, cur_seed);
         rng_twist(rng);
-        rng->index = 0x58;
+        rng->index = rng_index;
         
-        sf1_shuffle(folder, 30, rng, 6, cur_seed);
+        sf1_shuffle(folder, folder_length, rng, 6, cur_seed, print_slot);
     }
 }
 
@@ -849,7 +909,7 @@ void gen_folder_then_do_sf1_shuffle(void) {
 
     rng->index = 0x111;
 
-    sf1_shuffle(folder, folder_length, rng, folder_length, 0x1337);
+    sf1_shuffle(folder, folder_length, rng, folder_length, 0x1337, FALSE);
 }
 
 card_type car_virus_folder[] = {
@@ -886,7 +946,17 @@ card_type car_virus_folder[] = {
 };
 
 void gen_folder_then_do_soft_reset_folder_manipulation(void) {
-    soft_reset_manipulation(car_virus_folder);
+    soft_reset_manipulation(car_virus_folder, 30, 0x250, 0x280, 0x58, FALSE);
+}
+
+void gen_slot_folder_then_do_soft_reset_folder_manipulation(uint folder_length, uint start_frame_boundary, uint end_frame_boundary, uint rng_index) {
+    card_type folder[folder_length];
+
+    for (card_type card = 0; card < folder_length; card++) {
+        folder[card] = card;
+    }
+
+    soft_reset_manipulation(folder, folder_length, start_frame_boundary, end_frame_boundary, rng_index, TRUE);
 }
 
 #define ENC_PERCENT(rng) (((rng_next(rng) & 0xffff) % 0xc80) / 0x20)
@@ -1049,15 +1119,16 @@ void verify_enc_percent_values(uint seed) {
 }
     
 int main(void) {
+    //gen_slot_folder_then_do_soft_reset_folder_manipulation(30, 650, 1000, 44);
     //verify_enc_percent_values(0xa2bf5137);
-    get_best_seed_for_skip_truck_comps_encounters(0xa2bf0900); // 6dbe1c00
+    //get_best_seed_for_skip_truck_comps_encounters(0xa2bf0900); // 6dbe1c00
     //verify_last_two_words_of_rng_state(0xa2bfb10b);
     //skip_truck_comps_encounters();
     //check_0xffffffff_output();
     //gen_folder_then_do_soft_reset_folder_manipulation();
     //gen_folder_then_do_sf1_shuffle();
     //check_0xffffffff_output();
-    //find_actual_good_trader_lists(amaken_lists);
+    find_actual_good_trader_lists(amaken_lists);
     //find_all_periods();
     /*printf("\n");
     chip_trader_optimize = FALSE;
